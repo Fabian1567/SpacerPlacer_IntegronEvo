@@ -43,6 +43,8 @@ def run_multiple_groups(ls_data_path, save_path, rec_parameter_dict, lh_fct=None
                         save_reconstructed_events=False,
                         dpi=90,
                         figsize_rec=(None, None, 'px'),
+                        cluster_json_path=None,
+                        cluster_score='lin'
                         ):
     if seed is not None:
         np.random.seed(seed)
@@ -56,7 +58,7 @@ def run_multiple_groups(ls_data_path, save_path, rec_parameter_dict, lh_fct=None
         if not os.path.exists(ind_save_path):
             os.makedirs(ind_save_path)
         logger.info(f'{i + 1} / {len(ls_data_path)} aligning group {group_name}... \n')
-        crispr_group = load_align_single_fasta(data_path, ind_save_path,
+        crispr_group = load_align_single_fasta(data_path, ind_save_path, cluster_json_path, cluster_score,
                                                group_name=group_name,
                                                logger=logger,
                                                mafft_options=None,

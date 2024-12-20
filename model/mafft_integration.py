@@ -1,9 +1,13 @@
 import itertools
+import json
 import pickle
 import subprocess
 import os
 import numpy as np
 import platform
+
+from sklearn.manifold import MDS
+from sklearn.preprocessing import MinMaxScaler
 
 from model.helpers import import_data
 from additional_data.additional_scripts.model.helpers import raw_data_tools
@@ -99,6 +103,78 @@ def convert_spacer_arrays_to_random_pseudo_dna(ls_arrays, length=20):
                     break
 
     dict_unique_id_spacers = {a: generate_pseudo_spacer_dna(alph, length=length) for a, alph in dict_alphabets.items()}
+
+    new_ls_arrays = []
+    for array in ls_arrays:
+        new_array = ['1', '2', '3', '4', '3', '2', '1']
+        for v in array:
+            new_array += dict_unique_id_spacers[v]
+            new_array += ['1', '2', '3', '4', '3', '2', '1']
+        new_ls_arrays.append(new_array)
+    return new_ls_arrays, dict_unique_id_spacers, dict_alphabets, '1234321'
+
+
+def do_mds(matrix):
+    # Perform MDS
+    embedding = MDS(n_components=2, dissimilarity='precomputed')
+    X_transformed = embedding.fit_transform(matrix)
+
+    # Scale the coordinates to fit within the range [0, 25]
+    scaler = MinMaxScaler(feature_range=(0, 25))
+    X_transformed_scaled = scaler.fit_transform(X_transformed)
+
+    # Map scaled coordinates to integers
+    X_transformed_integer = np.floor(X_transformed_scaled).astype(int)
+
+    return X_transformed_integer
+
+
+def convert_spacer_arrays_to_random_pseudo_dna_cluster(ls_arrays, reverse_cluster_map, matrices, length=22):
+    dict_alphabets = dict()
+    dict_unique_id_spacers = {}
+
+    set_alphabets = set()
+    considered_alphabet_range = list(range(9, 197))
+    mapping_one = np.arange(223, 249)
+    mapping_two = np.arange(197, 223)
+
+    for key, val in reverse_cluster_map.items():
+        current_alphabet = []
+        while True:
+            tuple_4 = tuple(np.random.choice(considered_alphabet_range, 4, replace=False))
+            if tuple_4 not in set_alphabets:
+                current_alphabet = {str(tuple_4[0]), str(tuple_4[1]),
+                                    str(tuple_4[2]), str(tuple_4[3]),
+                                    }
+                set_alphabets.add(tuple_4)
+                break
+
+        if len(val) == 1:
+            dict_unique_id_spacers[str(val[0])] = generate_pseudo_spacer_dna(current_alphabet, length=length)
+        else:
+            mds = do_mds(matrices[key - 1])
+            base_seq = generate_pseudo_spacer_dna(current_alphabet, length=22)
+            repeat_length = 1  # Length of the repeat
+            for i in range(len(val)):
+                temp = []
+                coords = mds[i]
+                #
+                # # Calculate the starting position for the insert
+                # middle_start = len(temp) // 2 - (repeat_length // 2)
+                #
+                # # Insert repeats into the middle of the sequence
+                # for j in range(repeat_length):
+                #     temp.insert(middle_start + j, str(mapping_one[coords[0]]))  # First repeat
+                # for j in range(repeat_length):
+                #     temp.insert(middle_start + repeat_length + j, str(mapping_two[coords[1]]))
+
+                temp.append(str(mapping_one[coords[0]]))
+                temp.append(str(mapping_two[coords[1]]))
+
+                temp.append(str(mapping_one[coords[0]]))
+                temp.append(str(mapping_two[coords[1]]))
+
+                dict_unique_id_spacers[str(val[i])] = temp
 
     new_ls_arrays = []
     for array in ls_arrays:
@@ -206,6 +282,91 @@ def write_matrixfile(unique_hex_val, path, file_name, match=10, mismatch=-1000):
     return os.path.join(path, file_name + '.txt')
 
 
+def write_matrixfile_cluster(unique_hex_val, path, file_name, cluster_map, distances, hx_to_id_dict, cluster_score,
+                             match=10,
+                             mismatch=-1000):
+    str_match = str(match)
+    str_mismatch = str(mismatch)
+    with open(os.path.join(path, file_name + '.txt'), 'w') as f:
+        for (val_0, val_1) in itertools.combinations_with_replacement(unique_hex_val, 2):
+            if val_0 == val_1:
+                f.write(' '.join([val_0, val_1, str_match]))
+            else:
+                if cluster_score == 'exp':
+                    dist = get_distance_exp(hx_to_id_dict[val_0[2:]], hx_to_id_dict[val_1[2:]], cluster_map, distances)
+                else:
+                    dist = get_distance(hx_to_id_dict[val_0[2:]], hx_to_id_dict[val_1[2:]], cluster_map, distances)
+
+                if dist is None:
+                    f.write(' '.join([val_0, val_1, str_mismatch]))
+                else:
+                    f.write(' '.join([val_0, val_1, str(dist)]))
+            f.write('\n')
+    return os.path.join(path, file_name + '.txt')
+
+
+def get_distance(val_0, val_1, cluster_map, distances):
+    # Check if both sequences belong to the same cluster
+    if cluster_map.get(val_0) == cluster_map.get(val_1):
+        cluster_idx = cluster_map[val_0] - 1
+        cluster_distances = distances[cluster_idx]
+        max_dist = max([dist for sub_dict in cluster_distances.values() for dist in sub_dict.values()])
+
+        # Ensure the distance is stored only in one direction (seq1 < seq2)
+        if val_0 < val_1:
+            dist = cluster_distances.get(val_0, {}).get(val_1)
+            return 10 - (dist / max_dist) * (10 - 5)
+        else:
+            dist = cluster_distances.get(val_1, {}).get(val_0)
+            return 10 - (dist / max_dist) * (10 - 5)
+    else:
+        return None  # seq1 and seq2 are in different clusters
+
+
+def get_distance_exp(val_0, val_1, cluster_map, distances):
+    # Check if both sequences belong to the same cluster
+    if cluster_map.get(val_0) == cluster_map.get(val_1):
+        cluster_idx = cluster_map[val_0] - 1
+        cluster_distances = distances[cluster_idx]
+        max_dist = max([dist for sub_dict in cluster_distances.values() for dist in sub_dict.values()])
+
+        # Ensure the distance is stored only in one direction (seq1 < seq2)
+        if val_0 < val_1:
+            dist = cluster_distances.get(val_0, {}).get(val_1)
+        else:
+            dist = cluster_distances.get(val_1, {}).get(val_0)
+
+        scaled_value = 10 * ((max_dist - dist) / max_dist) ** 2
+        return scaled_value
+    else:
+        return None  # seq1 and seq2 are in different clusters
+
+
+def write_matrixfile_cluster_pseudo(unique_hex_val, path, file_name, match=10, mismatch=-1000):
+    str_match = str(match)
+    str_mismatch = str(mismatch)
+
+    mapping_one = np.arange(223, 249)
+    hex_dict_one = {hex(value): value for value in mapping_one}
+    mapping_two = np.arange(197, 223)
+    hex_dict_two = {hex(value): value for value in mapping_two}
+
+    with open(os.path.join(path, file_name + '.txt'), 'w') as f:
+        for (val_0, val_1) in itertools.combinations_with_replacement(unique_hex_val, 2):
+            if val_0 in hex_dict_one and val_1 in hex_dict_one:
+                dist = 1000 - (abs(hex_dict_one[val_0] - hex_dict_one[val_1]) / 25) * 1000
+                f.write(' '.join([val_0, val_1, str(dist)]))
+            elif val_0 in hex_dict_two and val_1 in hex_dict_two:
+                dist = 1000 - (abs(hex_dict_two[val_0] - hex_dict_two[val_1]) / 25) * 1000
+                f.write(' '.join([val_0, val_1, str(dist)]))
+            elif val_0 == val_1:
+                f.write(' '.join([val_0, val_1, str_match]))
+            else:
+                f.write(' '.join([val_0, val_1, str_mismatch]))
+            f.write('\n')
+    return os.path.join(path, file_name + '.txt')
+
+
 def write_fasta(ls_arrays, array_names, path, file_name):
     save_path = os.path.join(path, file_name + '.txt')
     # print('ha', ls_arrays, array_names)
@@ -244,11 +405,17 @@ def convert_mafft_output(file_path):
     return ls_arrays, ls_names
 
 
-def align_crispr_groups(work_path, dict_crispr_groups, mafft_options=None, logger=None, seed=None):
+def align_crispr_groups(work_path, dict_crispr_groups, cluster_json_path, cluster_score, mafft_options=None,
+                        logger=None, seed=None):
     if not os.path.exists(work_path):
         os.makedirs(work_path)
 
     for group_name, crispr_group in dict_crispr_groups.items():
+
+        cluster_map, distances = None, None
+        if cluster_json_path is not None:
+            cluster_map, distances = load_cluster_info(cluster_json_path, group_name)
+
         dict_arrays_as_list = crispr_group.get_arrays_as_lists()
         ls_names = list(dict_arrays_as_list.keys())
         ls_arrays = list(dict_arrays_as_list.values())
@@ -279,15 +446,37 @@ def align_crispr_groups(work_path, dict_crispr_groups, mafft_options=None, logge
             raise ValueError('No arrays in group {}. Mafft might not have finished.'.format(group_name))
 
         if pseudo_dna:
-            ls_renamed_arrays, dict_unique_id_spacers, \
-                dict_alphabets, repeat = convert_spacer_arrays_to_random_pseudo_dna(ls_arrays, length=20)
+            if cluster_json_path is not None:
+                reverse_cluster_map = compute_reverse_cluster_map(cluster_map)
+                distance_matrices = compute_distance_matrices(distances)
 
-            ls_hx_arrays, unique_hx_val = pseudo_dna_array_to_hex(ls_renamed_arrays)
+                ls_renamed_arrays, dict_unique_id_spacers, \
+                    dict_alphabets, repeat = convert_spacer_arrays_to_random_pseudo_dna_cluster(ls_arrays,
+                                                                                                reverse_cluster_map,
+                                                                                                distance_matrices,
+                                                                                                length=22)
+
+                ls_hx_arrays, unique_hx_val = pseudo_dna_array_to_hex(ls_renamed_arrays)
+
+                mx_path = write_matrixfile_cluster_pseudo(unique_hx_val, work_path, group_name + '_mx')
+
+            else:
+                ls_renamed_arrays, dict_unique_id_spacers, \
+                    dict_alphabets, repeat = convert_spacer_arrays_to_random_pseudo_dna(ls_arrays, length=20)
+
+                ls_hx_arrays, unique_hx_val = pseudo_dna_array_to_hex(ls_renamed_arrays)
+
+                mx_path = write_matrixfile(unique_hx_val, work_path, group_name + '_mx')
         else:
             ls_renamed_arrays, dict_renaming, dict_reverse_renaming = rename_spacers_for_mafft(ls_arrays)
             ls_hx_arrays, unique_hx_val = array_to_hex(ls_renamed_arrays)
+            if cluster_json_path is not None:
+                hx_to_id_dict = hx_to_id(ls_arrays, ls_hx_arrays)
+                mx_path = write_matrixfile_cluster(unique_hx_val, work_path, group_name + '_mx', cluster_map, distances,
+                                                   hx_to_id_dict, cluster_score)
+            else:
+                mx_path = write_matrixfile(unique_hx_val, work_path, group_name + '_mx')
 
-        mx_path = write_matrixfile(unique_hx_val, work_path, group_name + '_mx')
         write_fasta(ls_hx_arrays, ls_names, work_path, group_name)
 
         run_mafft(os.path.join(work_path, group_name),
@@ -313,7 +502,99 @@ def align_crispr_groups(work_path, dict_crispr_groups, mafft_options=None, logge
         crispr_group.update_spacer_arrays_by_ls_arrays_as_list(ls_names, ls_arrays)
         crispr_group.convert_arrays_from_mafft_fmt()
 
+        if cluster_json_path is not None:
+            dict_crispr_groups = cluster_renaming(dict_crispr_groups, group_name, cluster_map)
+
     return dict_crispr_groups
+
+
+def load_cluster_info(cluster_json_path, group_name):
+    with open(cluster_json_path, 'r') as f:
+        merged_data = json.load(f)
+
+    data = merged_data[group_name]
+    cluster_map = {int(k): v for k, v in data['cluster_map'].items()}
+
+    distances = []
+    for cluster_distances in data['distances']:
+        int_cluster_distances = {int(k): {int(sub_k): v for sub_k, v in sub_dict.items()} for k, sub_dict in
+                                 cluster_distances.items()}
+        distances.append(int_cluster_distances)
+
+    return cluster_map, distances
+
+
+def hx_to_id(ls_arrays, ls_hx_arrays):
+    hx_to_id_dict = {}
+    for i in range(len(ls_arrays)):
+        for j in range(len(ls_arrays[i])):
+            hx_to_id_dict[ls_hx_arrays[i][j]] = int(ls_arrays[i][j])
+    return hx_to_id_dict
+
+
+def cluster_renaming(dict_crispr_groups, group_name, cluster_map):
+    cluster_to_value_map = {}
+    value_map = {}
+    new_value = 1
+
+    for spacer_array in dict_crispr_groups[group_name].crispr_dict.values():
+        for s in spacer_array.spacer_array:
+            if s != '-' and s != '200':
+                if cluster_map[int(s)] not in cluster_to_value_map:
+                    cluster_to_value_map[cluster_map[int(s)]] = new_value
+                    new_value += 1
+                value_map[int(s)] = cluster_to_value_map[cluster_map[int(s)]]
+        spacer_array.spacer_array = [s if s == '-' else str(value_map[int(s)]) for s in spacer_array.spacer_array]
+
+    return dict_crispr_groups
+
+
+def compute_reverse_cluster_map(cluster_map):
+    reverse_cluster_map = {}
+    for key, value in cluster_map.items():
+        if value not in reverse_cluster_map:
+            reverse_cluster_map[value] = [key]
+        else:
+            reverse_cluster_map[value].append(key)
+    return reverse_cluster_map
+
+
+def compute_distance_matrices(distances_clust):
+    matrices = []
+    for item in distances_clust:
+        if item:
+            unique_indices = set(item.keys())
+            for subdict in item.values():
+                unique_indices.update(subdict.keys())
+
+            index_to_pos = {index: pos for pos, index in enumerate(sorted(unique_indices))}
+            matrix_size = len(unique_indices)
+
+            distances = np.zeros((matrix_size, matrix_size), dtype=int)
+
+            for row, subdict in item.items():
+                for col, value in subdict.items():
+                    row_pos = index_to_pos[row]
+                    col_pos = index_to_pos[col]
+                    distances[row_pos, col_pos] = value
+                    distances[col_pos, row_pos] = value
+
+            max_distance = distances.max()
+            if max_distance > 0:
+                scaled_matrix = np.zeros((matrix_size, matrix_size), dtype=int)
+                for i in range(len(scaled_matrix)):
+                    for j in range(i + 1, len(scaled_matrix)):
+                        scaled_dist = np.round(1 + (distances[i][j] / max_distance) * 4).astype(int)
+                        scaled_matrix[i][j] = scaled_dist
+                        scaled_matrix[j][i] = scaled_dist
+            else:
+                scaled_matrix = distances
+
+            matrices.append(scaled_matrix)
+        else:
+            matrices.append(None)
+
+    return matrices
 
 
 def run_mafft(file_path, output_path, options, mx_path, logger=None):

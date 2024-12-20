@@ -123,7 +123,7 @@ def tree_handling(tree, crispr_group, name_inner_nodes=False, bl_eps=0):
     return tree, crispr_group
 
 
-def load_align_single_fasta(data_path, work_path, mafft_options=None, group_name='g', logger=None, save_path=None,
+def load_align_single_fasta(data_path, work_path, cluster_json_path, cluster_score, mafft_options=None, group_name='g', logger=None, save_path=None,
                             seed=None):
     dict_fasta = read_fasta(data_path)
     # group metadata format?
@@ -147,7 +147,7 @@ def load_align_single_fasta(data_path, work_path, mafft_options=None, group_name
         ls_crispr_arrays.append(crispr_array)
     crispr_group = CRISPRGroup(None, ls_crispr_arrays, name=group_name)
     dict_crispr_group = {crispr_group.name: crispr_group}
-    dict_crispr_group = mafft_integration.align_crispr_groups(work_path, dict_crispr_group, mafft_options=mafft_options,
+    dict_crispr_group = mafft_integration.align_crispr_groups(work_path, dict_crispr_group, cluster_json_path, cluster_score, mafft_options=mafft_options,
                                                               logger=logger, seed=seed)
     if save_path:
         with open(save_path, 'wb') as f:

@@ -47,6 +47,8 @@ parser.add_argument('-it', '--input_type', type=str, choices=['spacer_fasta', 'p
                     help='Determines the input type, i.e. either already preprocessed fasta style spacer arrays, '
                          'a pickled file with CRISPR group(s) (our own data structure) '
                          'or data extracted from CRISPRCasFinder or CRISPRCasdb.')
+parser.add_argument('--cluster_json', type=str, default=None,
+                    help='Path to json file with clustering information.')
 # Have to decide on this at some point:
 # parser.add_argument('--metadata_arrays', type=str, default=None,
 #                     help='Path to metadata file. The metadata file should be a csv or dictionary')
@@ -86,6 +88,10 @@ parser.add_argument('--extend_branches', type=float, default=0.00001,
 #                          "Otherwise the maximum of the child's branch lengths and the standard likelihood "
 #                          "computation is used. The stationary distribution might lead to undesired results, "
 #                          "that are not parsimonious. We do not recommend to use this flag.")
+parser.add_argument('-cs', '--cluster_score', type=str, choices=['lin', 'exp'],
+                    default='lin',
+                    help='Determines whether the MAFFT matrix scores per cluster are scaled linearly or exponentially '
+                         '(will be ignored for datasets with more than 248 unique spacers).')
 # ########################################################################################################### Tree
 # tree estimation:
 parser.add_argument('--tree_distance_function', type=str, choices=['likelihood'],
@@ -331,6 +337,46 @@ elif args.input_type in ['ccf', 'crisprcasfinder', 'spacer_fasta']:
             os.makedirs(path_to_tree)
         json.dump(dict_trees, open(tree_path, 'w'))
 
+    path_to_cluster = os.path.join(args.output_path, 'additional_data')
+    cluster_path = os.path.join(args.output_path, 'additional_data', 'dict_clusters.json')
+    if args.cluster_json is None:
+        cluster_path = None
+    elif os.path.isfile(args.cluster_json):
+        logger.info(f'Using cluster file {args.cluster_json}.')
+        if len(ls_path_to_spacer_fasta) == 1:
+            dict_clusters = {os.path.splitext(os.path.basename(ls_path_to_spacer_fasta[0]))[0]:
+                              json.load(open(args.cluster_json))}
+            if not os.path.exists(path_to_cluster):
+                os.makedirs(path_to_cluster)
+            json.dump(dict_clusters, open(cluster_path, 'w'))
+    else:
+        logger.info(f'Using cluster folder {args.cluster_json}.')
+        dict_clusters = {}
+        list_dir_os_path = os.listdir(args.cluster_json)
+        list_dir_os_path_no_ext = set([os.path.splitext(o)[0] for o in os.listdir(args.cluster_json)])
+        for group in os.listdir(args.input_path):
+            group_no_ext = os.path.splitext(group)[0]
+            cp = None
+            for file in list_dir_os_path:
+                if file.startswith(group_no_ext) and not file.endswith(('.fa', '.fasta', '.fna')):
+                    cp = os.path.join(args.cluster_json, file)
+                    break
+
+            if cp is None:
+                logger.error(f'No cluster found for group {group}. '
+                             f'File would be found in folder {args.cluster_json} '
+                             f'with filename {group_no_ext} (+ extension).')
+                raise ValueError(f'No cluster found for group {group}. '
+                                 f'File would be found in folder {args.cluster_json} '
+                                 f'with filename {group_no_ext} (+ extension).')
+
+
+            dict_clusters[group_no_ext] = json.load(open(cp))
+        if not os.path.exists(path_to_cluster):
+            os.makedirs(path_to_cluster)
+        json.dump(dict_clusters, open(cluster_path, 'w'))
+
+
     df_results_wo_details = run_multiple_groups(ls_path_to_spacer_fasta, args.output_path,
                                                 rec_parameter_dict,
                                                 logger=logger,
@@ -355,7 +401,9 @@ elif args.input_type in ['ccf', 'crisprcasfinder', 'spacer_fasta']:
                                                 seed=args.seed,
                                                 save_reconstructed_events=args.save_reconstructed_events,
                                                 dpi=args.dpi_rec,
-                                                figsize_rec=figsize_rec
+                                                figsize_rec=figsize_rec,
+                                                cluster_json_path = cluster_path,
+                                                cluster_score = args.cluster_score
                                                 )
     summary_dict = compose_summary_dict(df_results_wo_details, dict(vars(args)))
     write_summary(summary_dict, os.path.join(args.output_path, 'summary.txt'))
