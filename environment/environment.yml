@@ -17,3 +17,4 @@ dependencies:
   - biopython>=1.79
   - python-graphviz>=0.17
   - dill>=0.3.5.1
+  - scikit-learn

@@ -156,23 +156,14 @@ def convert_spacer_arrays_to_random_pseudo_dna_cluster(ls_arrays, reverse_cluste
             base_seq = generate_pseudo_spacer_dna(current_alphabet, length=22)
             repeat_length = 1  # Length of the repeat
             for i in range(len(val)):
-                temp = []
+                temp = base_seq.copy()
                 coords = mds[i]
-                #
-                # # Calculate the starting position for the insert
-                # middle_start = len(temp) // 2 - (repeat_length // 2)
-                #
-                # # Insert repeats into the middle of the sequence
-                # for j in range(repeat_length):
-                #     temp.insert(middle_start + j, str(mapping_one[coords[0]]))  # First repeat
-                # for j in range(repeat_length):
-                #     temp.insert(middle_start + repeat_length + j, str(mapping_two[coords[1]]))
 
-                temp.append(str(mapping_one[coords[0]]))
-                temp.append(str(mapping_two[coords[1]]))
-
-                temp.append(str(mapping_one[coords[0]]))
-                temp.append(str(mapping_two[coords[1]]))
+                middle_start = len(temp) // 2 - (repeat_length // 2)
+                for j in range(repeat_length):
+                    temp.insert(middle_start + j, str(mapping_one[coords[0]]))
+                for j in range(repeat_length):
+                    temp.insert(middle_start + repeat_length + j, str(mapping_two[coords[1]]))
 
                 dict_unique_id_spacers[str(val[i])] = temp
 
